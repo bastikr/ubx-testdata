@@ -1,0 +1,126 @@
+#!/usr/bin/env python
+
+import argparse
+import sys
+import os
+import codecs
+
+import ubx
+
+filename_template_default = "rawmessage-{class}-{id}-{length:03d}-{checksum}.ubx"
+
+argparser = argparse.ArgumentParser(description="Extract UBX messages from stream")
+argparser.add_argument("input", help="file or socket")
+argparser.add_argument("output", help="output directory")
+argparser.add_argument("--progress", help="show progress information", action="store_true")
+argparser.add_argument("--limit", help="limit the amount of messages that are extracted of the same type", type=int)
+argparser.add_argument("--distinguish_length", help="Messages count as different if their length differs", action="store_false")
+argparser.add_argument("--template", help="Template for the output filenames", default=filename_template_default)
+argparser.add_argument("--dry-run", "-n", dest="dryrun", help="Don't actually save messages.", action="store_true")
+
+args = argparser.parse_args()
+
+
+if args.limit is None:
+    args.limit = float("inf")
+
+if ":" in args.input:
+    raise NotImplementedError()
+else:
+    if not os.path.exists(args.input):
+        raise ValueError("Given argument is neither a path nor a socket.")
+    f = open(args.input, "rb")
+    read_raw = f.read
+
+if not os.path.isdir(args.output):
+    raise ValueError("Given output directory does not exist: {}".format(args.output))
+
+
+class Statistics:
+    template = "read: {}  \textracted: {}"
+
+    def __init__(self, show_progress):
+        self.show_progress = show_progress
+        self.messages_read = 0
+        self.messages_extracted = 0
+
+    def show(self, reset=False):
+        sys.stdout.write(self.template.format(
+            self.messages_read, self.messages_extracted))
+        if reset:
+            sys.stdout.write("\r")
+        sys.stdout.flush()
+
+    def count_read(self):
+        self.messages_read += 1
+        if self.show_progress:
+            self.show(reset=True)
+
+    def count_extracted(self):
+        self.messages_extracted += 1
+        if self.show_progress:
+            self.show(reset=True)
+
+
+
+statistics = Statistics(show_progress=args.progress)
+
+
+reader = ubx.Reader(read_raw)
+parser = ubx.default_parser
+
+if args.distinguish_length:
+    def key(rawmessage):
+        return rawmessage[2:6]
+else:
+    def key(rawmessage):
+        return rawmessage[2:4]
+
+
+rawmessages = {}
+
+def read_rawmessagebytes(seek_syncchars=True):
+    parts = reader.read_rawmessageparts(seek_syncchars=seek_syncchars)
+    return b"".join(parts), {
+        "header" : codecs.encode(parts[0], "hex").decode("utf-8"),
+        "class" : codecs.encode(parts[1], "hex").decode("utf-8"),
+        "id" : codecs.encode(parts[2], "hex").decode("utf-8"),
+        "length" : len(parts[4]),
+        "checksum" : codecs.encode(parts[5], "hex").decode("utf-8")
+        }
+
+def savemessage(rawmessage, info):
+    name = args.template.format(**info)
+    filename = os.path.join(args.output, name)
+    with open(filename, "wb") as f:
+        f.write(rawmessage)
+
+
+def addmessage(rawmessage, info):
+    statistics.count_read()
+    key_ = key(rawmessage)
+    if key_ not in rawmessages and args.limit > 0:
+        rawmessages[key_] = 1
+    elif rawmessages[key_] < args.limit:
+        rawmessages[key_] += 1
+    else:
+        return
+    if not args.dryrun:
+        savemessage(rawmessage, info)
+    statistics.count_extracted()
+
+
+def run():
+    while True:
+        try:
+            rawmessage, info = read_rawmessagebytes()
+        except ubx.ChecksumError:
+            continue
+        except EOFError:
+            break
+        else:
+            addmessage(rawmessage, info)
+
+run()
+statistics.show()
+print()
