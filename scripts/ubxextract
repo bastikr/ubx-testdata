@@ -134,5 +134,6 @@ while True:
     else:
         addmessage(rawmessage, info)
 
+f.close()
 statistics.show()
 print()
