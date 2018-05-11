@@ -63,12 +63,7 @@ class Statistics:
             self.show(reset=True)
 
 
-
 statistics = Statistics(show_progress=args.progress)
-
-
-reader = ubx.Reader(read_raw)
-parser = ubx.default_parser
 
 if args.distinguish_length:
     def key(rawmessage):
@@ -76,7 +71,6 @@ if args.distinguish_length:
 else:
     def key(rawmessage):
         return rawmessage[2:4]
-
 
 rawmessages = {}
 
@@ -118,9 +112,9 @@ if args.update:
         if not name.endswith("ubx"):
             continue
         with open(os.path.join(args.output, name), "rb") as f_message:
-            reader_message = ubx.Reader(f_message.read)
+            reader = ubx.Reader(f_message.read)
             try:
-                rawmessage, info = read_rawmessagebytes(reader_message)
+                rawmessage, info = read_rawmessagebytes(reader)
             except ubx.ChecksumError:
                 continue
             except EOFError:
@@ -128,6 +122,7 @@ if args.update:
             else:
                 countmessage(rawmessage)
 
+reader = ubx.Reader(read_raw)
 
 while True:
     try:
@@ -138,7 +133,6 @@ while True:
         break
     else:
         addmessage(rawmessage, info)
-
 
 statistics.show()
 print()
