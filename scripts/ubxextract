@@ -13,6 +13,7 @@ argparser = argparse.ArgumentParser(description="Extract UBX messages from strea
 argparser.add_argument("input", help="file or socket")
 argparser.add_argument("output", help="output directory")
 argparser.add_argument("--progress", help="show progress information", action="store_true")
+argparser.add_argument("--update", help="count messages in the output directory towards the message limit", action="store_true")
 argparser.add_argument("--limit", help="limit the amount of messages that are extracted of the same type", type=int)
 argparser.add_argument("--distinguish_length", help="Messages count as different if their length differs", action="store_false")
 argparser.add_argument("--template", help="Template for the output filenames", default=filename_template_default)
@@ -79,7 +80,7 @@ else:
 
 rawmessages = {}
 
-def read_rawmessagebytes(seek_syncchars=True):
+def read_rawmessagebytes(reader, seek_syncchars=True):
     parts = reader.read_rawmessageparts(seek_syncchars=seek_syncchars)
     return b"".join(parts), {
         "header" : codecs.encode(parts[0], "hex").decode("utf-8"),
@@ -95,8 +96,7 @@ def savemessage(rawmessage, info):
     with open(filename, "wb") as f:
         f.write(rawmessage)
 
-
-def addmessage(rawmessage, info):
+def countmessage(rawmessage):
     statistics.count_read()
     key_ = key(rawmessage)
     if key_ not in rawmessages and args.limit > 0:
@@ -104,23 +104,41 @@ def addmessage(rawmessage, info):
     elif rawmessages[key_] < args.limit:
         rawmessages[key_] += 1
     else:
-        return
-    if not args.dryrun:
+        return False
+    return True
+
+def addmessage(rawmessage, info):
+    if countmessage(rawmessage) and not args.dryrun:
         savemessage(rawmessage, info)
     statistics.count_extracted()
 
-
-def run():
-    while True:
-        try:
-            rawmessage, info = read_rawmessagebytes()
-        except ubx.ChecksumError:
+if args.update:
+    filenames = os.listdir(args.output)
+    for name in filenames:
+        if not name.endswith("ubx"):
             continue
-        except EOFError:
-            break
-        else:
-            addmessage(rawmessage, info)
+        with open(os.path.join(args.output, name), "rb") as f_message:
+            reader_message = ubx.Reader(f_message.read)
+            try:
+                rawmessage, info = read_rawmessagebytes(reader_message)
+            except ubx.ChecksumError:
+                continue
+            except EOFError:
+                break
+            else:
+                countmessage(rawmessage)
 
-run()
+
+while True:
+    try:
+        rawmessage, info = read_rawmessagebytes(reader)
+    except ubx.ChecksumError:
+        continue
+    except EOFError:
+        break
+    else:
+        addmessage(rawmessage, info)
+
+
 statistics.show()
 print()
