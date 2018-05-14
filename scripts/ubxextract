@@ -76,12 +76,11 @@ rawmessages = {}
 
 def read_rawmessagebytes(reader, seek_syncchars=True):
     parts = reader.read_rawmessageparts(seek_syncchars=seek_syncchars)
-    return b"".join(parts), {
-        "header" : codecs.encode(parts[0], "hex").decode("utf-8"),
-        "class" : codecs.encode(parts[1], "hex").decode("utf-8"),
-        "id" : codecs.encode(parts[2], "hex").decode("utf-8"),
-        "length" : len(parts[4]),
-        "checksum" : codecs.encode(parts[5], "hex").decode("utf-8")
+    return b"\xb5\x62" + b"".join(parts), {
+        "class" : codecs.encode(parts[0], "hex").decode("utf-8"),
+        "id" : codecs.encode(parts[1], "hex").decode("utf-8"),
+        "length" : len(parts[3]),
+        "checksum" : codecs.encode(parts[4], "hex").decode("utf-8")
         }
 
 def savemessage(rawmessage, info):

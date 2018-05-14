@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+
+import argparse
+import sys
+import os
+import codecs
+
+import ubx
+
+filename_template_default = "rawmessage-{class}-{id}-{length:03d}-{checksum}.ubx"
+
+argparser = argparse.ArgumentParser(description="Extract UBX messages from stream")
+argparser.add_argument("input", help="file or socket")
+argparser.add_argument("output", help="output directory")
+
+args = argparser.parse_args()
+
+if not os.path.isdir(args.input):
+    raise ValueError("Input argument must be a directory.")
+
+
+statistics = {}
+
+def read_rawmessagebytes(reader, seek_syncchars=True):
+    parts = reader.read_rawmessageparts(seek_syncchars=seek_syncchars)
+    return b"".join(parts), {
+        "class" : codecs.encode(parts[0], "hex").decode("utf-8"),
+        "id" : codecs.encode(parts[1], "hex").decode("utf-8"),
+        "length" : len(parts[3]),
+        "checksum" : codecs.encode(parts[4], "hex").decode("utf-8")
+        }
+
+
+filenames = os.listdir(args.input)
+for name in filenames:
+    if not name.endswith("ubx"):
+        continue
+    with open(os.path.join(args.input, name), "rb") as f:
+        reader = ubx.Reader(f.read)
+        try:
+            rawmessage, info = read_rawmessagebytes(reader)
+        except (ubx.ChecksumError, EOFError):
+            print("Warning: Couldn't read {}".format(name))
+            continue
+        
+        if info["class"] not in statistics:
+            statistics[info["class"]] = {}
+        d_class = statistics[info["class"]]
+
+        if info["id"] not in d_class:
+            d_class[info["id"]] = {}
+        d_id = d_class[info["id"]]
+
+        if info["length"] not in d_id:
+            d_id[info["length"]] = 1
+        else:
+            d_id[info["length"]] += 1
+
+template = """<html>
+<body>
+<h1>Available UBX Messages</h1>
+<table>
+<tr>
+<th>Class</th> <th>Id</th> <th>Name</th><th>Lengths</th>
+</tr>
+{}
+</table>
+</body>
+</html>
+"""
+
+template_row = "<tr><td>{class}</td><td>{id}</td><td>{name}</td><td>{lengths}</td></tr>"
+
+counter = 0
+rows = []
+d_row = {}
+for message_class in sorted(statistics.keys()):
+    d_cls = statistics[message_class]
+    d_row["class"] = message_class
+    for message_id in sorted(d_cls.keys()):
+        d_id = d_cls[message_id]
+        d_row["id"] = message_id
+        lengths = []
+        for length in sorted(d_id.keys()):
+            lengths.append("{} ({})".format(length, d_id[length]))
+            counter += 1
+        d_row["lengths"] = "".join(lengths)
+        key = codecs.decode((d_row["class"] + d_row["id"]).encode("utf-8"), "hex")
+        if key in ubx.default_parser.descriptions:
+            d_row["name"] = ubx.default_parser.descriptions[key].name
+        else:
+            d_row["name"] = "?"
+        rows.append(template_row.format(**d_row))
+
+with open(args.output, "w") as f:
+    f.write(template.format("\n".join(rows)))
+
+print("Detected {} messages".format(counter))
